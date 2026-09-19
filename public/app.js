@@ -6,7 +6,13 @@ const state = {
   licenses: [],
   statuses: [],
   editingId: '',
+  selectedDepIds: new Set(),
+  exportExcluded: { projects: new Set(), statuses: new Set(), licenses: new Set() },
+  exportSnapshot: null,
 };
+
+// 导出面板里“未填许可”这个选项的取值，与服务端约定的写法一致
+const EXPORT_LICENSE_NONE = '__none__';
 
 const el = (id) => document.getElementById(id);
 
@@ -101,6 +107,7 @@ async function loadProjects() {
   state.projects = payload.projects || [];
   renderProjects();
   renderProjectOptions();
+  renderExportChoices();
 }
 
 async function loadDeps() {
@@ -120,6 +127,7 @@ async function loadDeps() {
   state.statuses = payload.statuses || [];
   renderDepFilterOptions();
   renderDeps();
+  renderExportChoices();
 }
 
 function renderProjects() {
@@ -185,6 +193,7 @@ function renderDeps() {
   body.innerHTML = state.deps.map((item) => {
     const statusTag = item.status === '已弃用' ? 'off' : 'on';
     return `<tr>
+      <td class="check-cell"><input type="checkbox" data-dep-check="${escapeHtml(item.id)}" ${state.selectedDepIds.has(item.id) ? 'checked' : ''} aria-label="选择 ${escapeHtml(item.name)}"></td>
       <td>${escapeHtml(projectName(item.projectId))}</td>
       <td class="mono">${escapeHtml(item.name)}</td>
       <td class="mono">${escapeHtml(item.version)}</td>
@@ -200,6 +209,150 @@ function renderDeps() {
     </tr>`;
   }).join('');
   el('dep-empty').classList.toggle('hidden', state.deps.length > 0);
+  syncCheckAll();
+}
+
+// 表头全选框跟随当前列表的勾选情况：全勾、全没勾、勾了一部分三种样子
+function syncCheckAll() {
+  const box = el('dep-check-all');
+  const total = state.deps.length;
+  const checked = state.deps.filter((item) => state.selectedDepIds.has(item.id)).length;
+  box.checked = total > 0 && checked === total;
+  box.indeterminate = checked > 0 && checked < total;
+}
+
+function updateSelectedCount() {
+  el('export-selected-count').textContent = String(state.selectedDepIds.size);
+}
+
+// 导出面板里的三组勾选项：默认全选，取消过的项记在 exportExcluded 里，列表刷新后保持
+function renderChoiceGroup(id, options, group) {
+  const excluded = state.exportExcluded[group];
+  el(id).innerHTML = options
+    .map((opt) => `<label class="chip"><input type="checkbox" data-export-exclude="${group}" value="${escapeHtml(opt.value)}" ${excluded.has(opt.value) ? '' : 'checked'}> ${escapeHtml(opt.label)}</label>`)
+    .join('');
+}
+
+function renderExportChoices() {
+  renderChoiceGroup('export-projects', state.projects.map((item) => ({ value: item.id, label: item.name })), 'projects');
+  renderChoiceGroup('export-statuses', state.statuses.map((item) => ({ value: item, label: item })), 'statuses');
+  const licenseOptions = state.licenses.map((item) => ({ value: item, label: item }));
+  licenseOptions.push({ value: EXPORT_LICENSE_NONE, label: '未填' });
+  renderChoiceGroup('export-licenses', licenseOptions, 'licenses');
+}
+
+// 条件或勾选一变，之前的预演就不能再确认了，避免导出的不是看到的
+function invalidateExport() {
+  const hadSnapshot = Boolean(state.exportSnapshot);
+  state.exportSnapshot = null;
+  el('export-confirm').disabled = true;
+  if (hadSnapshot) {
+    const box = el('export-result');
+    box.className = 'export-result stale';
+    box.textContent = '导出条件或勾选有变化，请重新预演';
+  }
+}
+
+function checkedValues(id) {
+  return Array.from(document.querySelectorAll(`#${id} input[type="checkbox"]:checked`)).map((node) => node.value);
+}
+
+function readExportCriteria() {
+  const modeNode = document.querySelector('input[name="export-mode"]:checked');
+  const mode = modeNode ? modeNode.value : 'filtered';
+  if (mode === 'selected') return { depIds: Array.from(state.selectedDepIds) };
+  return {
+    projectIds: checkedValues('export-projects'),
+    statuses: checkedValues('export-statuses'),
+    licenses: checkedValues('export-licenses'),
+  };
+}
+
+async function runExportPreview() {
+  clearNotice();
+  const criteria = readExportCriteria();
+  if (criteria.depIds && !criteria.depIds.length) {
+    notify('请先在列表里勾选要导出的登记', 'error');
+    return;
+  }
+  try {
+    const payload = await request('/api/deps/export/preview', {
+      method: 'POST',
+      body: JSON.stringify({ ...criteria, operator: currentOperator() }),
+    });
+    state.exportSnapshot = payload;
+    renderExportPreview(payload);
+    el('export-confirm').disabled = false;
+  } catch (err) {
+    state.exportSnapshot = null;
+    el('export-confirm').disabled = true;
+    notify(err.message, 'error');
+  }
+}
+
+function renderExportPreview(preview) {
+  const box = el('export-result');
+  const byProject = preview.byProject.map((item) => `${escapeHtml(item.name)} ${item.count} 条`).join('、');
+  const byLicense = preview.byLicense.map((item) => `${escapeHtml(item.license || '未填')} ${item.count} 条`).join('、');
+  const missingLicense = preview.missingLicense.length
+    ? `未填许可 ${preview.missingLicense.length} 条：${preview.missingLicense.map((item) => `${escapeHtml(item.name)}（${escapeHtml(item.project)}）`).join('、')}`
+    : '许可都已填写';
+  const missingOwner = preview.missingOwner.length
+    ? `未填责任人 ${preview.missingOwner.length} 条：${preview.missingOwner.map((item) => `${escapeHtml(item.name)}（${escapeHtml(item.project)}）`).join('、')}`
+    : '责任人都已填写';
+  box.className = 'export-result';
+  box.innerHTML = `<p><strong>预演结果：共 ${preview.total} 条</strong></p>
+    <p>按项目：${byProject}</p>
+    <p>按许可：${byLicense}</p>
+    <p>${missingLicense}</p>
+    <p>${missingOwner}</p>
+    <p class="export-hint">确认无误后点「确认导出」生成文件</p>`;
+}
+
+async function runExportConfirm() {
+  const snapshot = state.exportSnapshot;
+  if (!snapshot) {
+    notify('请先预演，核对数量后再导出', 'error');
+    return;
+  }
+  const button = el('export-confirm');
+  button.disabled = true;
+  try {
+    const payload = await request('/api/deps/export', {
+      method: 'POST',
+      body: JSON.stringify({ snapshotId: snapshot.snapshotId }),
+    });
+    downloadTextFile(payload.fileName, payload.content);
+    renderExportDone(payload);
+    notify(`已导出 ${payload.total} 条依赖登记`, 'ok');
+  } catch (err) {
+    notify(err.message, 'error');
+    if (err.code === 'EXPORT_SNAPSHOT_NOT_FOUND') state.exportSnapshot = null;
+  } finally {
+    button.disabled = !state.exportSnapshot;
+  }
+}
+
+// 导出完成后把条数与按项目的分布贴出来，数字与预演出自同一个快照，一定对得上
+function renderExportDone(payload) {
+  const box = el('export-result');
+  const byProject = payload.byProject.map((item) => `${item.name} ${item.count} 条`).join('、');
+  const line = document.createElement('p');
+  line.className = 'export-done';
+  line.textContent = `已导出 ${payload.total} 条（按项目：${byProject}），文件：${payload.fileName}`;
+  box.appendChild(line);
+}
+
+function downloadTextFile(fileName, content) {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 function openDepForm(dep) {
@@ -335,6 +488,48 @@ document.addEventListener('click', async (event) => {
   }
 });
 
+// 勾选与导出条件的变化统一在这里处理：行勾选决定“只带其中几条”，条件一变预演就作废
+document.addEventListener('change', (event) => {
+  const node = event.target;
+
+  if (node.id === 'dep-check-all') {
+    state.deps.forEach((item) => {
+      if (node.checked) state.selectedDepIds.add(item.id);
+      else state.selectedDepIds.delete(item.id);
+    });
+    renderDeps();
+    afterSelectionChange();
+    return;
+  }
+
+  if (node.matches('[data-dep-check]')) {
+    if (node.checked) state.selectedDepIds.add(node.dataset.depCheck);
+    else state.selectedDepIds.delete(node.dataset.depCheck);
+    syncCheckAll();
+    afterSelectionChange();
+    return;
+  }
+
+  if (node.closest('#export-panel')) {
+    const group = node.dataset.exportExclude;
+    if (group && state.exportExcluded[group]) {
+      if (node.checked) state.exportExcluded[group].delete(node.value);
+      else state.exportExcluded[group].add(node.value);
+    }
+    invalidateExport();
+  }
+});
+
+// 勾选了条目就默认切到“只导出勾选的条目”，勾选数同步到面板上
+function afterSelectionChange() {
+  updateSelectedCount();
+  if (state.selectedDepIds.size) {
+    const radio = document.querySelector('input[name="export-mode"][value="selected"]');
+    if (radio) radio.checked = true;
+  }
+  invalidateExport();
+}
+
 el('project-form').addEventListener('submit', submitProject);
 el('dep-form').addEventListener('submit', submitDep);
 el('dep-new').addEventListener('click', () => {
@@ -346,6 +541,21 @@ el('dep-new').addEventListener('click', () => {
   openDepForm(null);
 });
 el('dep-cancel').addEventListener('click', closeDepForm);
+el('dep-export').addEventListener('click', () => {
+  clearNotice();
+  el('export-panel').classList.toggle('hidden');
+});
+el('export-close').addEventListener('click', () => {
+  el('export-panel').classList.add('hidden');
+});
+el('export-preview').addEventListener('click', runExportPreview);
+el('export-confirm').addEventListener('click', runExportConfirm);
+el('export-clear').addEventListener('click', () => {
+  state.selectedDepIds.clear();
+  renderDeps();
+  updateSelectedCount();
+  invalidateExport();
+});
 el('filter-apply').addEventListener('click', () => {
   clearNotice();
   loadDeps().catch((err) => notify(err.message, 'error'));

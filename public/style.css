@@ -341,3 +341,89 @@ label.full input {
   display: flex;
   gap: 10px;
 }
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.export-panel {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfcfe;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.export-hint {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.export-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.export-label {
+  min-width: 32px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.export-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.export-choices label,
+.export-mode {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.export-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.export-result {
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+  font-size: 13px;
+}
+
+.export-result p {
+  margin: 2px 0;
+}
+
+.export-result.stale {
+  color: #8a5a00;
+}
+
+.export-done {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.check-cell {
+  width: 32px;
+  text-align: center;
+}

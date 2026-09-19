@@ -65,13 +65,42 @@
           <button type="button" id="filter-apply">筛选</button>
           <button type="button" id="filter-reset" class="ghost">重置</button>
           <button type="button" id="dep-refresh" class="ghost">刷新</button>
+          <button type="button" id="dep-export">导出</button>
           <button type="button" id="dep-new">新建登记</button>
         </div>
+      </div>
+      <div class="export-panel hidden" id="export-panel">
+        <p class="export-hint">选好条件后先点「预演」核对条数与待补信息，确认无误再导出；预演之后如果登记有改动，请重新预演。</p>
+        <div class="export-row">
+          <span class="export-label">项目</span>
+          <div class="export-choices" id="export-projects"></div>
+        </div>
+        <div class="export-row">
+          <span class="export-label">状态</span>
+          <div class="export-choices" id="export-statuses"></div>
+        </div>
+        <div class="export-row">
+          <span class="export-label">许可</span>
+          <div class="export-choices" id="export-licenses"></div>
+        </div>
+        <div class="export-row">
+          <span class="export-label">范围</span>
+          <label class="export-mode"><input type="radio" name="export-mode" value="filtered" checked> 按所选条件整体导出</label>
+          <label class="export-mode"><input type="radio" name="export-mode" value="selected"> 只导出列表里勾选的条目（已选 <span id="export-selected-count">0</span> 条）</label>
+        </div>
+        <div class="export-actions">
+          <button type="button" id="export-preview">预演</button>
+          <button type="button" id="export-confirm" disabled>确认导出</button>
+          <button type="button" id="export-clear" class="ghost">清空勾选</button>
+          <button type="button" id="export-close" class="ghost">收起</button>
+        </div>
+        <div class="export-result hidden" id="export-result"></div>
       </div>
       <div class="table-wrap">
         <table class="grid">
           <thead>
             <tr>
+              <th class="check-cell"><input type="checkbox" id="dep-check-all" title="全选当前列表"></th>
               <th>项目</th>
               <th>依赖名称</th>
               <th>版本</th>

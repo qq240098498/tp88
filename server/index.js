@@ -52,6 +52,23 @@ app.get('/api/deps', (req, res) => {
   res.json(result);
 });
 
+// 依赖清单导出：先预演冻结快照，再按快照导出，同一次导出重复执行结果一致
+app.post('/api/deps/export/preview', (req, res) => {
+  try {
+    res.json(api.previewExport(req.body));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/deps/export', (req, res) => {
+  try {
+    res.json(api.exportDeps(req.body));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 app.post('/api/deps', (req, res) => {
   try {
     res.status(201).json(api.createDep(req.body));
