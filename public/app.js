@@ -8,6 +8,15 @@ const state = {
   editingId: '',
 };
 
+// 一次导出会话：弹层打开时把全量数据冻成快照，预演、成文、完成提示都只看这份快照。
+// lastFile 按勾选范围缓存已经生成的文件，同一会话里同一范围点两次，拿到的是同一个产物。
+const exportState = {
+  snapshot: null,
+  options: null,
+  pageFilters: { projectId: '', status: '', license: '', keyword: '' },
+  lastFile: null,
+};
+
 const el = (id) => document.getElementById(id);
 
 // 统一的请求入口：出错时把服务端给的错误码、说明与出错位置一起抛出去
@@ -109,6 +118,8 @@ async function loadDeps() {
   const status = el('filter-status').value;
   const license = el('filter-license').value;
   const keyword = el('filter-keyword').value.trim();
+  // 记下页面当前筛选，导出弹层打开时按这份勾选做默认值
+  exportState.pageFilters = { projectId, status, license, keyword };
   if (projectId) params.set('projectId', projectId);
   if (status) params.set('status', status);
   if (license) params.set('license', license);
@@ -374,6 +385,208 @@ el('filter-license').addEventListener('change', () => {
 });
 el('operator').addEventListener('change', () => {
   window.localStorage.setItem(OPERATOR_KEY, currentOperator());
+});
+
+// ===== 导出清单 =====
+
+const MISSING_LIST_CAP = 20;
+
+function listMissing(items) {
+  const shown = items.slice(0, MISSING_LIST_CAP)
+    .map((item) => `<li>${escapeHtml(item.projectName)} / <span class="preview-name">${escapeHtml(item.name)}</span></li>`)
+    .join('');
+  const rest = items.length > MISSING_LIST_CAP
+    ? `<li>……另有 ${items.length - MISSING_LIST_CAP} 条未列出</li>` : '';
+  return `<ul>${shown}${rest}</ul>`;
+}
+
+function countBlock(title, entries) {
+  const rows = entries.map(([name, count]) => `<li>${escapeHtml(name)}：${count} 条</li>`).join('');
+  return `<div class="preview-col"><h4>${escapeHtml(title)}</h4><ul>${rows}</ul></div>`;
+}
+
+// 预演内容与最终文件出自同一份快照、同一组勾选，数字必然一致
+function renderExportPreview() {
+  const scope = readExportScope();
+  const summary = DepExport.summarize(exportState.snapshot, scope);
+  const box = el('export-preview');
+
+  // 勾选一变，上一范围的导出完成提示就先收起来，免得和新预演对不上
+  const result = el('export-result');
+  if (!result.classList.contains('hidden')) {
+    result.className = 'export-result hidden';
+    result.textContent = '';
+    exportState.lastFile = null;
+  }
+
+  if (!summary.total) {
+    box.innerHTML = '<p class="preview-empty">当前勾选范围内没有任何条目，请调整勾选后再导出。</p>';
+    return summary;
+  }
+
+  const warnLicense = summary.missingLicense.length
+    ? `<div class="preview-warn"><b>${summary.missingLicense.length} 条还没写许可：</b>${listMissing(summary.missingLicense)}</div>`
+    : '';
+  const warnOwner = summary.missingOwner.length
+    ? `<div class="preview-warn"><b>${summary.missingOwner.length} 条还没写责任人：</b>${listMissing(summary.missingOwner)}</div>`
+    : '';
+
+  box.innerHTML = `
+    <div class="preview-total">本次将导出 ${summary.total} 条</div>
+    <div class="preview-cols">
+      ${countBlock('按项目', summary.projectCounts)}
+      ${countBlock('按许可', summary.licenseCounts)}
+    </div>
+    ${warnLicense}
+    ${warnOwner}`;
+  return summary;
+}
+
+function renderExportChecks() {
+  const options = exportState.options;
+
+  el('export-projects').innerHTML = options.projects.map((item) => `
+    <label><input type="checkbox" name="export-project" value="${escapeHtml(item.value)}">
+      ${escapeHtml(item.name)} <span class="check-count">${item.count} 条</span></label>`).join('');
+
+  const statusCounts = DepExport.summarize(exportState.snapshot, {}).statusCounts;
+  el('export-statuses').innerHTML = options.statuses.map((name) => {
+    const hit = statusCounts.find(([key]) => key === name);
+    return `<label><input type="checkbox" name="export-status" value="${escapeHtml(name)}">
+      ${escapeHtml(name)} <span class="check-count">${hit ? hit[1] : 0} 条</span></label>`;
+  }).join('');
+
+  el('export-licenses').innerHTML = options.licenses.map((item) => `
+    <label><input type="checkbox" name="export-license" value="${escapeHtml(item.value)}">
+      ${escapeHtml(item.name)} <span class="check-count">${item.count} 条</span></label>`).join('');
+}
+
+function checkedValues(name) {
+  return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map((node) => node.value);
+}
+
+function setCheckedValues(name, values) {
+  const wanted = new Set(values);
+  document.querySelectorAll(`input[name="${name}"]`).forEach((node) => {
+    node.checked = wanted.has(node.value);
+  });
+}
+
+function readExportScope() {
+  return {
+    projectIds: checkedValues('export-project'),
+    statuses: checkedValues('export-status'),
+    licenses: checkedValues('export-license'),
+    keyword: el('export-keyword').value.trim(),
+  };
+}
+
+function applyPageFiltersToChecks() {
+  const filters = exportState.pageFilters;
+  setCheckedValues('export-project', filters.projectId ? [filters.projectId] : []);
+  setCheckedValues('export-status', filters.status ? [filters.status] : []);
+  // 页面筛选没有“未填许可”这一项，许可下拉选到具体值时才勾选
+  setCheckedValues('export-license', filters.license ? [filters.license] : []);
+  el('export-keyword').value = filters.keyword;
+}
+
+function triggerDownload(file) {
+  const blob = new Blob([file.bytes], { type: file.mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = file.fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // 浏览器接住下载后再回收地址，避免某些浏览器下到一半地址失效
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// 打开弹层时重新拉一份不带任何筛选的全量数据冻成快照，这次导出的预演与文件都以它为准
+async function openExportModal() {
+  clearNotice();
+  try {
+    const payload = await request('/api/deps');
+    exportState.snapshot = DepExport.normalizeSnapshot({
+      projects: payload.projects || [],
+      deps: payload.deps || [],
+    });
+    exportState.options = DepExport.snapshotOptions(exportState.snapshot);
+    exportState.lastFile = null;
+  } catch (err) {
+    notify(err.message, 'error');
+    return;
+  }
+
+  el('export-result').className = 'export-result hidden';
+  el('export-result').textContent = '';
+  renderExportChecks();
+  applyPageFiltersToChecks();
+  renderExportPreview();
+  el('export-modal').classList.remove('hidden');
+}
+
+function closeExportModal() {
+  el('export-modal').classList.add('hidden');
+  exportState.lastFile = null;
+}
+
+function confirmExport() {
+  const scope = readExportScope();
+  const summary = DepExport.summarize(exportState.snapshot, scope);
+  if (!summary.total) {
+    renderExportPreview();
+    return;
+  }
+
+  // 同一范围在本次会话里只生成一次：第二次点击直接重发同一个文件，
+  // 文件名里的时刻与文件内容都不会变
+  const cacheKey = JSON.stringify(DepExport.normalizeScope(scope));
+  if (!exportState.lastFile || exportState.lastFile.key !== cacheKey) {
+    const moment = new Date(); // 时刻在首次确认时冻结，之后重复点击不再变化
+    exportState.lastFile = {
+      key: cacheKey,
+      scope,
+      summary,
+      file: DepExport.buildFile(exportState.snapshot, scope, moment),
+    };
+  }
+  const cached = exportState.lastFile;
+  triggerDownload(cached.file);
+
+  // 完成提示的数字直接取自同一份汇总，和预演、文件三处对齐
+  const perProject = cached.summary.projectCounts
+    .map(([name, count]) => `${name} ${count} 条`).join('、');
+  const result = el('export-result');
+  result.className = 'export-result ok';
+  result.innerHTML = `已导出 <b>${cached.summary.total}</b> 条，文件 <span class="preview-name">${escapeHtml(cached.file.fileName)}</span> 已开始下载。<br>按项目：${escapeHtml(perProject)}。`;
+}
+
+el('dep-export').addEventListener('click', openExportModal);
+el('export-close').addEventListener('click', closeExportModal);
+el('export-cancel').addEventListener('click', closeExportModal);
+el('export-modal').addEventListener('click', (event) => {
+  if (event.target === el('export-modal')) closeExportModal();
+});
+el('export-apply-page').addEventListener('click', () => {
+  applyPageFiltersToChecks();
+  renderExportPreview();
+});
+el('export-clear-all').addEventListener('click', () => {
+  setCheckedValues('export-project', []);
+  setCheckedValues('export-status', []);
+  setCheckedValues('export-license', []);
+  el('export-keyword').value = '';
+  renderExportPreview();
+});
+el('export-modal').addEventListener('change', (event) => {
+  if (event.target.matches('input[name^="export-"]')) renderExportPreview();
+});
+el('export-keyword').addEventListener('input', renderExportPreview);
+el('export-confirm').addEventListener('click', confirmExport);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !el('export-modal').classList.contains('hidden')) closeExportModal();
 });
 
 // 页面打开时先把项目与依赖登记拉一遍，项目决定登记表单里能选哪些归属

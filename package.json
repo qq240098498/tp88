@@ -4,7 +4,8 @@
   "private": true,
   "description": "依赖台账与版本核查平台（种子版本）",
   "scripts": {
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "test": "node --test test/export.test.js"
   },
   "engines": {
     "node": ">=18"

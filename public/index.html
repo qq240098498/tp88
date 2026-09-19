@@ -66,6 +66,7 @@
           <button type="button" id="filter-reset" class="ghost">重置</button>
           <button type="button" id="dep-refresh" class="ghost">刷新</button>
           <button type="button" id="dep-new">新建登记</button>
+          <button type="button" id="dep-export" class="ghost">导出清单</button>
         </div>
       </div>
       <div class="table-wrap">
@@ -113,6 +114,44 @@
     </section>
   </main>
 
+  <div class="modal-mask hidden" id="export-modal" role="dialog" aria-modal="true" aria-labelledby="export-title">
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="export-title">导出依赖清单</h3>
+        <button type="button" class="modal-close" id="export-close" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="export-tip">勾选要带走的项目、状态与许可，哪一类都不勾就表示这一类不限。勾选变化时下面会先预演一遍条数，确认后才生成文件。</p>
+        <div class="export-quick">
+          <button type="button" class="link" id="export-apply-page">按页面当前筛选勾选</button>
+          <button type="button" class="link" id="export-clear-all">全部不选（导出全量）</button>
+        </div>
+        <fieldset class="export-group">
+          <legend>项目</legend>
+          <div class="export-checks" id="export-projects"></div>
+        </fieldset>
+        <fieldset class="export-group">
+          <legend>状态</legend>
+          <div class="export-checks" id="export-statuses"></div>
+        </fieldset>
+        <fieldset class="export-group">
+          <legend>许可</legend>
+          <div class="export-checks" id="export-licenses"></div>
+        </fieldset>
+        <label class="export-keyword" data-field="exportKeyword">关键词（依赖名、责任人、备注）
+          <input id="export-keyword" maxlength="60" placeholder="可留空">
+        </label>
+        <div class="export-preview" id="export-preview"></div>
+        <div class="export-result hidden" id="export-result"></div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" id="export-confirm">确认导出</button>
+        <button type="button" id="export-cancel" class="ghost">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="export.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
